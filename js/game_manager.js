@@ -1,16 +1,20 @@
-function GameManager(size, InputManager, Actuator, StorageManager) {
+function GameManager(size, InputManager, Actuator, StorageManager, Solver) {
   this.size           = size; // Size of the grid
   this.inputManager   = new InputManager;
   this.storageManager = new StorageManager;
   this.actuator       = new Actuator;
+  this.solver         = new Solver;
 
   this.startTiles     = 2;
 
-  this.inputManager.on("move", this.move.bind(this));
   this.inputManager.on("restart", this.restart.bind(this));
   this.inputManager.on("keepPlaying", this.keepPlaying.bind(this));
-
+  this.inputManager.on(
+      "playBasicStrategy", this.changeStrategy.bind(this, "basic"));
+  this.inputManager.on(
+      "playRandomStrategy", this.changeStrategy.bind(this, "random"));
   this.setup();
+  this.solver.solverIntervalId = window.setInterval(() => this.move(), 1000);
 }
 
 // Restart the game
@@ -18,12 +22,20 @@ GameManager.prototype.restart = function () {
   this.storageManager.clearGameState();
   this.actuator.continueGame(); // Clear the game won/lost message
   this.setup();
+  this.solver.solverIntervalId = window.setInterval(() => this.move(), 1000);
 };
 
 // Keep playing after winning (allows going over 2048)
 GameManager.prototype.keepPlaying = function () {
   this.keepPlaying = true;
   this.actuator.continueGame(); // Clear the game won/lost message
+};
+
+// Update solver strategy
+GameManager.prototype.changeStrategy = function (strategy) {
+  document.getElementById("strategy").innerHTML = strategy;
+  this.solver.changeStrategy(strategy);
+  this.restart();
 };
 
 // Return true if the game is lost, or has won and the user hasn't kept playing
@@ -38,24 +50,30 @@ GameManager.prototype.setup = function () {
   // Reload the game from a previous game if present
   if (previousState) {
     this.grid        = new Grid(previousState.grid.size,
-                                previousState.grid.cells); // Reload grid
+        previousState.grid.cells); // Reload grid
     this.score       = previousState.score;
     this.over        = previousState.over;
     this.won         = previousState.won;
     this.keepPlaying = previousState.keepPlaying;
+    this.readyToMove = previousState.readyToMove;
   } else {
     this.grid        = new Grid(this.size);
     this.score       = 0;
     this.over        = false;
     this.won         = false;
     this.keepPlaying = false;
+    this.readyToMove = false;
 
     // Add the initial tiles
     this.addStartTiles();
   }
 
+  // Clear previous solver
+  this.solver.clearInterval();
+
   // Update the actuator
   this.actuate();
+
 };
 
 // Set up the initial tiles to start the game with
@@ -70,7 +88,6 @@ GameManager.prototype.addRandomTile = function () {
   if (this.grid.cellsAvailable()) {
     var value = Math.random() < 0.9 ? 2 : 4;
     var tile = new Tile(this.grid.randomAvailableCell(), value);
-
     this.grid.insertTile(tile);
   }
 };
@@ -95,6 +112,8 @@ GameManager.prototype.actuate = function () {
     bestScore:  this.storageManager.getBestScore(),
     terminated: this.isGameTerminated()
   });
+
+  this.readyToMove = !this.isGameTerminated();
 
 };
 
@@ -127,7 +146,10 @@ GameManager.prototype.moveTile = function (tile, cell) {
 };
 
 // Move tiles on the grid in the specified direction
-GameManager.prototype.move = function (direction) {
+GameManager.prototype.move = function () {
+  this.readyToMove = false;
+  direction = this.solver.getNextMove();
+  console.log("moving ", new Date().getTime()/1000, direction);
   // 0: up, 1: right, 2: down, 3: left
   var self = this;
 
@@ -181,7 +203,6 @@ GameManager.prototype.move = function (direction) {
 
   if (moved) {
     this.addRandomTile();
-
     if (!this.movesAvailable()) {
       this.over = true; // Game over!
     }
@@ -227,7 +248,7 @@ GameManager.prototype.findFarthestPosition = function (cell, vector) {
     previous = cell;
     cell     = { x: previous.x + vector.x, y: previous.y + vector.y };
   } while (this.grid.withinBounds(cell) &&
-           this.grid.cellAvailable(cell));
+  this.grid.cellAvailable(cell));
 
   return {
     farthest: previous,
